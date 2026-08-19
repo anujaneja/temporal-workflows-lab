@@ -1,0 +1,103 @@
+version: "3.8"
+
+# ─── Phase 1 ────────────────────────────────────────────────────────────────
+# Services: postgresql (Temporal-internal), temporal, temporal-ui, api, worker
+#
+# Phase 2 will add application-level postgresql + redis.
+# Phase 3 will add prometheus, grafana, load-generator, mock-external-api.
+
+services:
+
+  # ── Temporal's internal persistence ─────────────────────────────────────
+  postgresql:
+    image: postgres:16-alpine
+    container_name: temporal-postgres
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_DB: temporal
+    volumes:
+      - temporal-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - temporal-net
+
+  # ── Temporal Server ──────────────────────────────────────────────────────
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    container_name: temporal
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgresql
+    ports:
+      - "7233:7233"
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator cluster health --address $(hostname -i):7233 2>&1 | grep -q SERVING"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 15s
+    networks:
+      - temporal-net
+
+  # ── Temporal UI ──────────────────────────────────────────────────────────
+  temporal-ui:
+    image: temporalio/ui:2.33.0
+    container_name: temporal-ui
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:8080
+    ports:
+      - "8080:8080"
+    networks:
+      - temporal-net
+
+  # ── Go API ───────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./go
+      target: api
+    container_name: temporal-lab-api
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_HOST=temporal:7233
+      - API_PORT=8081
+    ports:
+      - "8081:8081"
+    networks:
+      - temporal-net
+
+  # ── Go Worker ────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./go
+      target: worker
+    container_name: temporal-lab-worker
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_HOST=temporal:7233
+    networks:
+      - temporal-net
+
+volumes:
+  temporal-postgres-data:
+
+networks:
+  temporal-net:
+    driver: bridge
