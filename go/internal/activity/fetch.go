@@ -16,8 +16,8 @@ type Item struct {
 }
 
 // FetchItemsActivity simulates fetching items from an external source.
-// In later phases this will call the MockExternalAPI and handle rate limiting.
-func FetchItemsActivity(ctx context.Context, req model.JobRequest) ([]Item, error) {
+// In Phase 8 this will call the MockExternalAPI and handle HTTP 429 / rate limiting.
+func (a *Activities) FetchItemsActivity(ctx context.Context, req model.JobRequest) ([]Item, error) {
 	log := activity.GetLogger(ctx)
 	log.Info("FetchItemsActivity started", "jobId", req.JobID, "itemCount", req.ItemCount)
 
