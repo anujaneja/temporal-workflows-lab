@@ -9,6 +9,10 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
+// TaskQueue is the single task queue used by the worker and the API client.
+// Later phases may introduce separate queues per priority level.
+const TaskQueue = "workflow-lab"
+
 // defaultActivityOptions are applied to every activity in this workflow.
 // Retry policy will be expanded in Phase 3.
 var defaultActivityOptions = workflow.ActivityOptions{
@@ -35,24 +39,24 @@ func DataProcessingWorkflow(ctx workflow.Context, req model.JobRequest) (model.J
 	ctx = workflow.WithActivityOptions(ctx, defaultActivityOptions)
 
 	// Step 1 — Validate
-	if err := workflow.ExecuteActivity(ctx, activity.ValidateJobActivity, req).Get(ctx, nil); err != nil {
+	if err := workflow.ExecuteActivity(ctx, (*activity.Activities).ValidateJobActivity, req).Get(ctx, nil); err != nil {
 		return failResult(req.JobID, startTime, workflow.Now(ctx), err)
 	}
 
 	// Step 2 — Fetch
 	var items []activity.Item
-	if err := workflow.ExecuteActivity(ctx, activity.FetchItemsActivity, req).Get(ctx, &items); err != nil {
+	if err := workflow.ExecuteActivity(ctx, (*activity.Activities).FetchItemsActivity, req).Get(ctx, &items); err != nil {
 		return failResult(req.JobID, startTime, workflow.Now(ctx), err)
 	}
 
 	// Step 3 — Process
 	var processResult activity.ProcessResult
-	if err := workflow.ExecuteActivity(ctx, activity.ProcessItemsActivity, req, items).Get(ctx, &processResult); err != nil {
+	if err := workflow.ExecuteActivity(ctx, (*activity.Activities).ProcessItemsActivity, req, items).Get(ctx, &processResult); err != nil {
 		return failResult(req.JobID, startTime, workflow.Now(ctx), err)
 	}
 
 	// Step 4 — Store
-	if err := workflow.ExecuteActivity(ctx, activity.StoreResultsActivity, req, processResult).Get(ctx, nil); err != nil {
+	if err := workflow.ExecuteActivity(ctx, (*activity.Activities).StoreResultsActivity, req, processResult).Get(ctx, nil); err != nil {
 		return failResult(req.JobID, startTime, workflow.Now(ctx), err)
 	}
 

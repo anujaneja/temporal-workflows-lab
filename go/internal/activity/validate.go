@@ -10,7 +10,8 @@ import (
 
 // ValidateJobActivity validates the incoming job request.
 // Non-retryable errors are returned for invalid input so Temporal does not retry them.
-func ValidateJobActivity(ctx context.Context, req model.JobRequest) error {
+// (Non-retryable wrapping is added in Phase 3.)
+func (a *Activities) ValidateJobActivity(ctx context.Context, req model.JobRequest) error {
 	log := activity.GetLogger(ctx)
 	log.Info("ValidateJobActivity started", "jobId", req.JobID, "tenantId", req.TenantID)
 

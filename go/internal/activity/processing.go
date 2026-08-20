@@ -16,8 +16,8 @@ type ProcessResult struct {
 }
 
 // ProcessItemsActivity processes the items returned by FetchItemsActivity.
-// In later phases it will simulate failures and rate limiting.
-func ProcessItemsActivity(ctx context.Context, req model.JobRequest, items []Item) (ProcessResult, error) {
+// In Phase 8 it will simulate failures and rate limiting.
+func (a *Activities) ProcessItemsActivity(ctx context.Context, req model.JobRequest, items []Item) (ProcessResult, error) {
 	log := activity.GetLogger(ctx)
 	log.Info("ProcessItemsActivity started", "jobId", req.JobID, "items", len(items))
 

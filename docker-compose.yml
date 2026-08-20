@@ -3,7 +3,9 @@ version: "3.8"
 # ─── Phase 1 ────────────────────────────────────────────────────────────────
 # Services: postgresql (Temporal-internal), temporal, temporal-ui, api, worker
 #
-# Phase 2 will add application-level postgresql + redis.
+# ─── Phase 2 ────────────────────────────────────────────────────────────────
+# Added: app-postgres, flyway (schema migrations), redis (reserved for Phase 7+)
+#
 # Phase 3 will add prometheus, grafana, load-generator, mock-external-api.
 
 services:
@@ -20,6 +22,68 @@ services:
       - temporal-postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - temporal-net
+
+  # ── Application PostgreSQL ────────────────────────────────────────────────
+  # Separate from Temporal's internal postgres so the two concerns stay isolated.
+  # Schema is managed by the flyway service below — no init scripts here.
+  app-postgres:
+    image: postgres:16-alpine
+    container_name: app-postgres
+    environment:
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: lab
+      POSTGRES_DB: lab
+    volumes:
+      - app-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - temporal-net
+
+  # ── Flyway ───────────────────────────────────────────────────────────────
+  # Short-lived container: runs migrations and exits.
+  # api and worker depend on service_completed_successfully so they never start
+  # against a schema-less database.
+  #
+  # Migration files live in db/migrations/ at the project root.
+  # Flyway tracks applied migrations in the flyway_schema_history table.
+  flyway:
+    image: flyway/flyway:10-alpine
+    container_name: flyway-migrate
+    command: migrate
+    depends_on:
+      app-postgres:
+        condition: service_healthy
+    environment:
+      - FLYWAY_URL=jdbc:postgresql://app-postgres:5432/lab
+      - FLYWAY_USER=lab
+      - FLYWAY_PASSWORD=lab
+      - FLYWAY_CONNECT_RETRIES=10
+    volumes:
+      - ./db/migrations:/flyway/sql:ro
+    networks:
+      - temporal-net
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  # Reserved for Phase 7+ (rate-limit state, fairness counters).
+  # Added here so the network topology is stable from Phase 2 onwards.
+  redis:
+    image: redis:7-alpine
+    container_name: app-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -73,9 +137,12 @@ services:
     depends_on:
       temporal:
         condition: service_healthy
+      flyway:
+        condition: service_completed_successfully
     environment:
       - TEMPORAL_HOST=temporal:7233
       - API_PORT=8081
+      - APP_DB_DSN=postgres://lab:lab@app-postgres:5432/lab?sslmode=disable
     ports:
       - "8081:8081"
     networks:
@@ -90,13 +157,17 @@ services:
     depends_on:
       temporal:
         condition: service_healthy
+      flyway:
+        condition: service_completed_successfully
     environment:
       - TEMPORAL_HOST=temporal:7233
+      - APP_DB_DSN=postgres://lab:lab@app-postgres:5432/lab?sslmode=disable
     networks:
       - temporal-net
 
 volumes:
   temporal-postgres-data:
+  app-postgres-data:
 
 networks:
   temporal-net:
