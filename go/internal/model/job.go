@@ -38,8 +38,12 @@ type JobRequest struct {
 	FairnessKey string   `json:"fairnessKey"`
 	// ItemCount controls how many mock items the FetchItems activity will return.
 	ItemCount int `json:"itemCount"`
-	// SimulateFailure tells activities to intentionally fail for retry experiments.
+	// SimulateFailure injects a retryable transient error into ProcessItemsActivity on
+	// attempts 1–2, then succeeds on attempt 3. Use to observe retry behaviour in Temporal UI.
 	SimulateFailure bool `json:"simulateFailure,omitempty"`
+	// SimulateStoreFailure injects a retryable transient error into StoreResultsActivity on
+	// attempts 1–2, then succeeds on attempt 3. Use to observe DB-failure retry behaviour.
+	SimulateStoreFailure bool `json:"simulateStoreFailure,omitempty"`
 }
 
 // JobResult is the workflow output.
