@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	// TODO: change to pgx instead of lib/pq it offers better performance and more features.
 	_ "github.com/lib/pq"
+	
 )
 
 type postgresStore struct {
@@ -17,6 +19,9 @@ type postgresStore struct {
 //
 // dsn example: postgres://lab:lab@app-postgres:5432/lab?sslmode=disable
 func NewPostgres(dsn string) (Store, error) {
+	//TODO: we should use a connection pool here to ensure that we don't open too many connections to the database.
+	// default value for max open connections and other connection pool settings should be used from a config file. 
+	// so, that we can easily change the settings without having to change the code.
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
