@@ -48,7 +48,14 @@ func (h *Handler) SubmitJob(c *gin.Context) {
 		TaskQueue: workflow.TaskQueue,
 	}
 
-	run, err := h.tc.ExecuteWorkflow(c.Request.Context(), options, workflow.DataProcessingWorkflow, req)
+	// Route to ParallelProcessingWorkflow when the caller requests it; otherwise
+	// use the default sequential DataProcessingWorkflow.
+	wfFunc := interface{}(workflow.DataProcessingWorkflow)
+	if req.UseParallelWorkflow {
+		wfFunc = workflow.ParallelProcessingWorkflow
+	}
+
+	run, err := h.tc.ExecuteWorkflow(c.Request.Context(), options, wfFunc, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

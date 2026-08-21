@@ -32,6 +32,7 @@ func main() {
 	w := worker.New(tc, workflow.TaskQueue, worker.Options{})
 
 	w.RegisterWorkflow(workflow.DataProcessingWorkflow)
+	w.RegisterWorkflow(workflow.ParallelProcessingWorkflow)
 
 	// Register all activity methods on the Activities struct at once.
 	// Temporal derives activity names from the method names (e.g. "ValidateJobActivity").
