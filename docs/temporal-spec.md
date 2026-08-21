@@ -862,10 +862,10 @@ This allows a meaningful comparison between the Go and Java Temporal SDKs.
 ### Phase 4 — Dependencies
 
 ```
-- [ ] Sequential dependencies
-- [ ] Parallel activities
-- [ ] Aggregation
-- [ ] Dependency failure experiments
+- [x] Sequential dependencies
+- [x] Parallel activities
+- [x] Aggregation
+- [x] Dependency failure experiments
 ```
 
 ### Phase 5 — Child Workflows

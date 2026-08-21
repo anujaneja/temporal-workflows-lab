@@ -46,3 +46,49 @@ func (a *Activities) ProcessItemsActivity(ctx context.Context, req model.JobRequ
 	log.Info("ProcessItemsActivity completed", "jobId", req.JobID, "processed", result.ItemsProcessed, "attempt", info.Attempt)
 	return result, nil
 }
+
+// ProcessPartAActivity processes the first partition of items in the parallel branch.
+//
+// Failure simulation (SimulateDependencyFailure == "PART_A" or "BOTH"):
+//   - Attempts 1–2: returns a retryable error to exercise parallel-branch failure propagation.
+//   - Attempt 3+: succeeds normally.
+//
+// Observable in Temporal UI alongside the concurrent ProcessPartBActivity execution.
+func (a *Activities) ProcessPartAActivity(ctx context.Context, req model.JobRequest, items []Item) (ProcessResult, error) {
+	log := activity.GetLogger(ctx)
+	info := activity.GetInfo(ctx)
+	log.Info("ProcessPartAActivity started", "jobId", req.JobID, "items", len(items), "attempt", info.Attempt)
+
+	shouldFail := req.SimulateDependencyFailure == "PART_A" || req.SimulateDependencyFailure == "BOTH"
+	if shouldFail && info.Attempt < 3 {
+		msg := fmt.Sprintf("simulated dependency failure in ProcessPartA for job %s (attempt %d)", req.JobID, info.Attempt)
+		log.Warn("ProcessPartAActivity injecting dependency failure", "jobId", req.JobID, "attempt", info.Attempt)
+		return ProcessResult{}, temporal.NewApplicationError(msg, "DependencyFailurePartA", nil)
+	}
+
+	result := ProcessResult{JobID: req.JobID, ItemsProcessed: len(items)}
+	log.Info("ProcessPartAActivity completed", "jobId", req.JobID, "processed", result.ItemsProcessed)
+	return result, nil
+}
+
+// ProcessPartBActivity processes the second partition of items in the parallel branch.
+//
+// Failure simulation (SimulateDependencyFailure == "PART_B" or "BOTH"):
+//   - Attempts 1–2: returns a retryable error.
+//   - Attempt 3+: succeeds normally.
+func (a *Activities) ProcessPartBActivity(ctx context.Context, req model.JobRequest, items []Item) (ProcessResult, error) {
+	log := activity.GetLogger(ctx)
+	info := activity.GetInfo(ctx)
+	log.Info("ProcessPartBActivity started", "jobId", req.JobID, "items", len(items), "attempt", info.Attempt)
+
+	shouldFail := req.SimulateDependencyFailure == "PART_B" || req.SimulateDependencyFailure == "BOTH"
+	if shouldFail && info.Attempt < 3 {
+		msg := fmt.Sprintf("simulated dependency failure in ProcessPartB for job %s (attempt %d)", req.JobID, info.Attempt)
+		log.Warn("ProcessPartBActivity injecting dependency failure", "jobId", req.JobID, "attempt", info.Attempt)
+		return ProcessResult{}, temporal.NewApplicationError(msg, "DependencyFailurePartB", nil)
+	}
+
+	result := ProcessResult{JobID: req.JobID, ItemsProcessed: len(items)}
+	log.Info("ProcessPartBActivity completed", "jobId", req.JobID, "processed", result.ItemsProcessed)
+	return result, nil
+}
