@@ -67,10 +67,14 @@ func (h *Handler) SubmitJob(c *gin.Context) {
 			return fmt.Errorf("create job record: %w", err)
 		}
 
-		// Step 2: start the workflow. If Temporal rejects it, the deferred
-		// rollback removes the DB row, keeping the two systems consistent.
-		var err error
-		run, err = h.tc.ExecuteWorkflow(c.Request.Context(), options, workflow.DataProcessingWorkflow, req)
+		// Route to ParallelProcessingWorkflow when the caller requests it; otherwise
+		// use the default sequential DataProcessingWorkflow.
+		wfFunc := interface{}(workflow.DataProcessingWorkflow)
+		if req.UseParallelWorkflow {
+			wfFunc = workflow.ParallelProcessingWorkflow
+		}
+
+		run, err := h.tc.ExecuteWorkflow(c.Request.Context(), options, wfFunc, req)
 		return err
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

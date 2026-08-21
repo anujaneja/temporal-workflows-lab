@@ -44,6 +44,14 @@ type JobRequest struct {
 	// SimulateStoreFailure injects a retryable transient error into StoreResultsActivity on
 	// attempts 1–2, then succeeds on attempt 3. Use to observe DB-failure retry behaviour.
 	SimulateStoreFailure bool `json:"simulateStoreFailure,omitempty"`
+	// UseParallelWorkflow routes the job to ParallelProcessingWorkflow instead of the default
+	// sequential DataProcessingWorkflow. The parallel workflow splits items into two halves,
+	// runs ProcessPartA and ProcessPartB concurrently, then aggregates before storing.
+	UseParallelWorkflow bool `json:"useParallelWorkflow,omitempty"`
+	// SimulateDependencyFailure injects a retryable failure into the named parallel branch on
+	// attempts 1–2, then succeeds on attempt 3. Only applies when UseParallelWorkflow is true.
+	// Accepted values: "PART_A" | "PART_B" | "BOTH" | "" (no failure).
+	SimulateDependencyFailure string `json:"simulateDependencyFailure,omitempty"`
 }
 
 // JobResult is the workflow output.
