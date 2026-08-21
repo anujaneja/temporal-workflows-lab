@@ -1,7 +1,7 @@
 package api
 
 import (
-	"log"
+	"fmt"
 	"net/http"
 
 	"github.com/anuj/temporal-workflows-lab/internal/model"
@@ -25,11 +25,17 @@ func NewHandler(tc client.Client, s store.Store) *Handler {
 
 // SubmitJob handles POST /jobs.
 //
-// 1. Starts a DataProcessingWorkflow in Temporal (source of truth for execution).
-// 2. Inserts a RUNNING row into the jobs table (source of truth for history/audit).
+// Atomicity strategy (best-effort, cross-system):
+//  1. Open a DB transaction and insert a RUNNING job record.
+//  2. Start the Temporal workflow inside the same transaction scope.
+//  3. If workflow creation fails → the transaction is rolled back, leaving the
+//     DB clean and returning an error to the caller.
+//  4. If both succeed → the transaction is committed.
 //
-// The DB write is best-effort: if it fails the workflow is still running and
-// StoreResultsActivity will upsert the row on completion. The failure is logged.
+// Note: if the commit itself fails after the workflow has already been accepted
+// by Temporal, the job record will be absent until StoreResultsActivity upserts
+// it on completion. This is an inherent limitation of dual-write systems and is
+// documented here for observability.
 func (h *Handler) SubmitJob(c *gin.Context) {
 	var req model.JobRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -48,35 +54,27 @@ func (h *Handler) SubmitJob(c *gin.Context) {
 		TaskQueue: workflow.TaskQueue,
 	}
 
-	run, err := h.tc.ExecuteWorkflow(c.Request.Context(), options, workflow.DataProcessingWorkflow, req)
-	if err != nil {
+	var run client.WorkflowRun
+	if err := h.store.RunInTx(c.Request.Context(), func(tx store.Store) error {
+		// Step 1: persist the job record so it is visible before the workflow runs.
+		if err := tx.CreateJob(c.Request.Context(), store.JobRecord{
+			ID:          req.JobID,
+			TenantID:    req.TenantID,
+			Priority:    req.Priority,
+			FairnessKey: req.FairnessKey,
+			Status:      model.JobStatusRunning,
+		}); err != nil {
+			return fmt.Errorf("create job record: %w", err)
+		}
+
+		// Step 2: start the workflow. If Temporal rejects it, the deferred
+		// rollback removes the DB row, keeping the two systems consistent.
+		var err error
+		run, err = h.tc.ExecuteWorkflow(c.Request.Context(), options, workflow.DataProcessingWorkflow, req)
+		return err
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-	}
-
-	//TODO: we should create a transaction here to ensure that the job is created 
-	// and the workflow is started atomically. First we should we create the job record in DB
-	// and then start the workflow. If the workflow fails, we should roll back the job record.
-	// If the workflow succeeds, we should update the job record with the results.
-	// If the workflow is cancelled, we should update the job record with the cancellation reason.
-	// If the workflow is timed out, we should update the job record with the timeout reason.
-	// If the workflow is terminated, we should update the job record with the termination reason.
-	// If the workflow is failed, we should update the job record with the failure reason.
-	// If the workflow is completed, we should update the job record with the completion results.
-	// we should use a transaction here to ensure that the job is created and the workflow is started atomically.
-	
-	// Record the job in our DB immediately so it is visible before the workflow
-	// completes. The row will be updated by StoreResultsActivity on completion.
-	if err := h.store.CreateJob(c.Request.Context(), store.JobRecord{
-		ID:          req.JobID,
-		TenantID:    req.TenantID,
-		Priority:    req.Priority,
-		FairnessKey: req.FairnessKey,
-		Status:      model.JobStatusRunning,
-	}); err != nil {
-		// Non-fatal: Temporal already accepted the workflow. Log and continue —
-		// StoreResultsActivity will upsert the record when the workflow finishes.
-		log.Printf("WARN: failed to create job record for %s: %v", req.JobID, err)
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{

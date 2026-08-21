@@ -35,5 +35,10 @@ type Store interface {
 	// Called by StoreResultsActivity when the workflow finishes.
 	SaveJobResult(ctx context.Context, rec JobRecord) error
 
+	// RunInTx executes fn inside a single database transaction.
+	// If fn returns an error the transaction is rolled back; otherwise it is committed.
+	// The Store passed to fn operates on that open transaction.
+	RunInTx(ctx context.Context, fn func(tx Store) error) error
+
 	Close() error
 }
