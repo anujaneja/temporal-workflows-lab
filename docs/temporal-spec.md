@@ -1009,4 +1009,52 @@ That makes this substantially more valuable as a **Staff-level systems/AI-assist
 
 With this SDD established, **Phase 1 should be the Go project skeleton + Docker Compose + Temporal Server + Temporal UI + a minimal worker**.
 
+---
+
+## 12. Testing Standards
+
+Every phase of this project **must ship with unit tests**. Tests are not optional and not deferred.
+
+### Framework
+
+All tests in the Go implementation are written using **Ginkgo v2 + Gomega**:
+
+```
+github.com/onsi/ginkgo/v2   — BDD test runner
+github.com/onsi/gomega      — rich matchers
+go.temporal.io/sdk/testsuite — Temporal test harness (no live server required)
+```
+
+### Test scope per package
+
+| Package | What is tested | How |
+|---------|---------------|-----|
+| `internal/activity` | Each activity method: success path, failure-simulation path, edge cases | `testsuite.WorkflowTestSuite.NewTestActivityEnvironment()` |
+| `internal/workflow` | Full workflow orchestration: happy path, each failure branch, parallel fan-out/fan-in | `testsuite.WorkflowTestSuite.NewTestWorkflowEnvironment()` with mocked activities |
+| `internal/api` | HTTP handlers: valid/invalid requests, store errors, Temporal errors, response shapes | `gin.TestMode` + `httptest.NewRecorder()` with hand-rolled fakes |
+| `internal/store` | `DBConfig` defaults and pool settings | Direct struct assertions (no live DB) |
+
+### Rules
+
+1. **Every new activity must have a `_test.go` file** that covers at least: happy path, non-retryable error case (if applicable), and retryable error case (if applicable).
+2. **Every new workflow must have a `_test.go` file** that covers: happy path and each failure branch using mocked activities.
+3. **Every new HTTP handler must have tests** covering: success, invalid input (400), and server-side errors (500).
+4. **No `database/sql`-level integration tests** ship by default — unit tests use fakes. Integration tests require a real PostgreSQL instance and are opt-in (tagged with `//go:build integration`).
+5. **Ginkgo suite bootstraps** (`suite_test.go`) live in each package directory. Each file calls `RunSpecs(t, "<Package> Suite")`.
+6. **Fakes over mocks** — hand-rolled fakes that implement the interface are preferred over generated mocks for store and client dependencies. This makes tests more readable and avoids generated-code churn.
+7. **`env.AssertExpectations(GinkgoT())`** must be called in `AfterEach` for all workflow tests that use `env.OnActivity(...)` to ensure every mocked call was made exactly as expected.
+
+### Running tests
+
+```bash
+# Run all unit tests
+cd go && go test ./internal/...
+
+# Run a specific package with verbose Ginkgo output
+cd go && go test ./internal/activity/... -v
+
+# Run tests matching a label
+cd go && go test ./internal/... -run TestActivity
+```
+
 I would do that as the next step rather than jumping directly into the full workflow.
