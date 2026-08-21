@@ -1,0 +1,49 @@
+---
+description: Keep temporal-spec.md and integration tests in sync with any code changes
+globs: go/**/*.go,docs/temporal-spec.md
+alwaysApply: false
+---
+
+# Keep Spec and Integration Tests in Sync
+
+Whenever you add or modify code in this repo, apply the following checks before finishing.
+
+## 1. Update `docs/temporal-spec.md`
+
+Update the spec when any of the following change:
+
+- **New or modified API endpoint** → update the relevant Phase section's API table and request/response shapes.
+- **New or modified workflow** → update the workflow description, activity sequence diagram, and input/output types in the relevant Phase section.
+- **New or modified activity** → update the activity list and its description in the relevant Phase section.
+- **New model field** → update any request/response examples that reference that model.
+- **New Phase of work started** → add a new Phase section following the existing structure (Purpose, API changes, Workflow changes, Activity changes, Data model changes).
+
+The spec lives at `docs/temporal-spec.md`. Do not rewrite entire sections — make targeted updates to the affected parts only.
+
+## 2. Update `go/tests/integration/`
+
+Update integration tests when any of the following change:
+
+- **New API endpoint** → add a new `Describe` block in `jobs_test.go` (or a new `*_test.go` file if the concern is distinct) covering the happy path and at least one error case.
+- **Modified API response shape** → update the field assertions in the relevant spec that polls or decodes that endpoint.
+- **New workflow flag or request field** → add a spec in `jobs_test.go` exercising the new flag (e.g., a new `simulate*` field or routing option).
+- **New failure mode** → add a spec that triggers and asserts the expected terminal status (`FAILED`, `CANCELLED`, etc.).
+
+Integration tests use `//go:build integration`, Ginkgo v2, and the `pollJobUntilDone` helper in `helpers_test.go`. New specs follow the same pattern:
+
+```go
+It("describes the scenario", func() {
+    resp := apiPost("/jobs", jobPayload{TenantID: "acme", ItemCount: 5, NewFlag: true})
+    Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+    jobID, _ := decodeBody(resp)["jobId"].(string)
+
+    result := pollJobUntilDone(jobID, 60*time.Second)
+    Expect(result["status"]).To(Equal("COMPLETED"))
+})
+```
+
+## What does NOT need an integration test
+
+- Internal refactors with no observable API change.
+- Changes only to `internal/store`, `internal/model`, or `internal/temporalclient` that don't affect endpoint behaviour.
+- Unit-test-only additions to `internal/`.

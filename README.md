@@ -14,7 +14,8 @@ A Go + Temporal learning lab demonstrating durable workflow orchestration with a
 6. [API reference & curl examples](#api-reference--curl-examples)
 7. [Observing workflows in Temporal UI](#observing-workflows-in-temporal-ui)
 8. [Failure simulation](#failure-simulation)
-9. [Project layout](#project-layout)
+9. [Running tests](#running-tests)
+10. [Project layout](#project-layout)
 
 ---
 
@@ -264,18 +265,25 @@ curl -s $BASE/jobs/$JOB_ID | jq
 
 ---
 
-## Running unit tests
+## Running tests
 
-Tests use **Ginkgo v2 + Gomega** and the **Temporal SDK test harness** — no live server or database required.
+The project has two test layers. Both use **Ginkgo v2 + Gomega** so the output format is consistent.
+
+### Unit tests (fast, no infrastructure)
+
+Uses the Temporal SDK test harness and in-memory fakes — no live server or database required.
 
 ```bash
 # Run all unit tests
-cd go && go test ./internal/...
+make test-unit
 
-# Run a specific package with full Ginkgo output
+# Equivalent long form
+cd go && go test ./internal/... -v -count=1
+
+# Single package with verbose Ginkgo output
 cd go && go test ./internal/activity/... -v
 
-# Run with race detector
+# With race detector
 cd go && go test -race ./internal/...
 ```
 
@@ -287,6 +295,54 @@ cd go && go test -race ./internal/...
 | `internal/workflow` | 11 | DataProcessingWorkflow (4 scenarios), ParallelProcessingWorkflow (6 scenarios) with mocked activities |
 | `internal/api` | 11 | SubmitJob, GetJob, CancelJob — valid, invalid, and error cases |
 | `internal/store` | 6 | DBConfig defaults and field values |
+
+### API integration tests (full stack, containers required)
+
+Uses [testcontainers-go](https://golang.testcontainers.org/) to spin up the complete stack automatically — **no manual `docker compose up` needed**. The test binary manages every container's lifecycle: two PostgreSQL instances, the Temporal server, Flyway migrations, the Worker, and the API.
+
+**Prerequisite:** Docker must be running.
+
+```bash
+# Run all API integration tests (recommended)
+make test-api
+
+# Equivalent long form
+cd go && go test ./tests/integration/... -tags integration -v -count=1 -timeout 10m
+```
+
+**What happens when you run `make test-api`:**
+
+1. A private Docker bridge network is created.
+2. `postgres:16-alpine` starts for Temporal's internal state.
+3. `postgres:16-alpine` starts for the application database.
+4. `temporalio/auto-setup:1.25.2` starts and connects to its postgres (up to 120 s to become healthy).
+5. `flyway/flyway:10-alpine` runs the migrations from `db/migrations/` and exits.
+6. The **Worker** image is built from `go/Dockerfile` (target `worker`) and started.
+7. The **API** image is built from `go/Dockerfile` (target `api`) and started; the suite waits for `GET /health → 200` before running any specs.
+8. All specs run against the live API over a random host port.
+9. All containers are terminated and the network is removed in `AfterSuite`.
+
+> **First run** pulls images and builds the Go binaries — expect 2–4 minutes. Subsequent runs reuse Docker's layer cache and finish much faster.
+
+**Integration test coverage:**
+
+| Describe block | Specs | What is covered |
+|----------------|-------|----------------|
+| `GET /health` | 1 | 200 with `status: ok` and correct Temporal address |
+| `POST /jobs` — immediate response | 3 | 202 shape, explicit jobId, 400 on malformed JSON |
+| `POST /jobs` — sequential workflow | 2 | Polls to `COMPLETED`, verifies `itemsProcessed`; fairness fields |
+| `POST /jobs` — parallel workflow | 1 | `useParallelWorkflow: true` reaches `COMPLETED` |
+| `POST /jobs` — failure simulation | 2 | `simulateFailure` and `simulateStoreFailure` both retry and complete |
+| `GET /jobs/:id` | 3 | 404 unknown ID, `RUNNING` immediately after submit, full result on `COMPLETED` |
+| `POST /jobs/:id/cancel` | 2 | Running job cancelled and confirmed by polling; 500 on non-existent job |
+
+### Run everything
+
+```bash
+make test-all
+```
+
+This runs unit tests first (fast), then the integration suite.
 
 ---
 
@@ -340,6 +396,7 @@ Watch the retries progress in real time at [http://localhost:8080](http://localh
 
 ```
 temporal-workflows-lab/
+├── Makefile                             # test-unit / test-api / test-all targets
 ├── db/
 │   └── migrations/
 │       └── V1__create_jobs_table.sql   # Flyway-managed schema
@@ -367,6 +424,12 @@ temporal-workflows-lab/
 │   │   │   └── dial.go                 # Retry-aware Temporal client dialer
 │   │   └── workflow/
 │   │       └── data_processing.go      # DataProcessingWorkflow definition
+│   ├── tests/
+│   │   └── integration/                # API integration tests (build tag: integration)
+│   │       ├── suite_test.go           # Container lifecycle (BeforeSuite / AfterSuite)
+│   │       ├── helpers_test.go         # HTTP client helpers + pollJobUntilDone
+│   │       ├── health_test.go          # GET /health specs
+│   │       └── jobs_test.go            # POST /jobs, GET /jobs/:id, POST /jobs/:id/cancel specs
 │   ├── Dockerfile                       # Multi-stage build (api + worker targets)
 │   ├── go.mod
 │   └── go.sum
