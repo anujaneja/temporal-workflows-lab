@@ -264,6 +264,32 @@ curl -s $BASE/jobs/$JOB_ID | jq
 
 ---
 
+## Running unit tests
+
+Tests use **Ginkgo v2 + Gomega** and the **Temporal SDK test harness** — no live server or database required.
+
+```bash
+# Run all unit tests
+cd go && go test ./internal/...
+
+# Run a specific package with full Ginkgo output
+cd go && go test ./internal/activity/... -v
+
+# Run with race detector
+cd go && go test -race ./internal/...
+```
+
+**Test coverage per package:**
+
+| Package | Specs | What is covered |
+|---------|-------|----------------|
+| `internal/activity` | 31 | ValidateJobActivity, FetchItemsActivity, ProcessItems/PartA/PartB, StoreResultsActivity, AggregateResultsActivity — all success + failure paths |
+| `internal/workflow` | 11 | DataProcessingWorkflow (4 scenarios), ParallelProcessingWorkflow (6 scenarios) with mocked activities |
+| `internal/api` | 11 | SubmitJob, GetJob, CancelJob — valid, invalid, and error cases |
+| `internal/store` | 6 | DBConfig defaults and field values |
+
+---
+
 ## Observing workflows in Temporal UI
 
 Open [http://localhost:8080](http://localhost:8080) in your browser.

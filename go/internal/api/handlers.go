@@ -73,8 +73,8 @@ func (h *Handler) SubmitJob(c *gin.Context) {
 		if req.UseParallelWorkflow {
 			wfFunc = workflow.ParallelProcessingWorkflow
 		}
-
-		run, err := h.tc.ExecuteWorkflow(c.Request.Context(), options, wfFunc, req)
+		var err error
+		run, err = h.tc.ExecuteWorkflow(c.Request.Context(), options, wfFunc, req)
 		return err
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
