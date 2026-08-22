@@ -94,6 +94,24 @@ var _ = Describe("POST /jobs", func() {
 		})
 	})
 
+	Describe("batch workflow — end-to-end completion", func() {
+		It("routes to the batch workflow, fans out to child workflows, and reaches COMPLETED", func() {
+			resp := apiPost("/jobs", jobPayload{
+				TenantID:         "acme",
+				Priority:         "MEDIUM",
+				ItemCount:        9,
+				UseBatchWorkflow: true,
+				BatchCount:       3,
+			})
+			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+			jobID, _ := decodeBody(resp)["jobId"].(string)
+
+			result := pollJobUntilDone(jobID, 90*time.Second)
+			Expect(result["status"]).To(Equal("COMPLETED"))
+			Expect(result["itemsProcessed"]).To(Equal(float64(9)))
+		})
+	})
+
 	Describe("failure simulation", func() {
 		It("retries and eventually succeeds when simulateFailure is true", func() {
 			// simulateFailure injects errors on attempts 1-2 then succeeds on 3.
@@ -119,6 +137,22 @@ var _ = Describe("POST /jobs", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
 			jobID, _ := decodeBody(resp)["jobId"].(string)
 
+			result := pollJobUntilDone(jobID, 90*time.Second)
+			Expect(result["status"]).To(Equal("COMPLETED"))
+		})
+
+		It("retries a failing child batch and eventually succeeds when simulateChildFailure is FIRST", func() {
+			resp := apiPost("/jobs", jobPayload{
+				TenantID:             "acme",
+				ItemCount:            6,
+				UseBatchWorkflow:     true,
+				BatchCount:           3,
+				SimulateChildFailure: "FIRST",
+			})
+			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+			jobID, _ := decodeBody(resp)["jobId"].(string)
+
+			// Allow extra time for the failing batch's retries.
 			result := pollJobUntilDone(jobID, 90*time.Second)
 			Expect(result["status"]).To(Equal("COMPLETED"))
 		})
@@ -197,5 +231,27 @@ var _ = Describe("POST /jobs/:id/cancel", func() {
 	It("returns 500 when trying to cancel a non-existent job", func() {
 		resp := apiPost("/jobs/ghost-job-xyz/cancel", nil)
 		Expect(resp.StatusCode).To(Equal(http.StatusInternalServerError))
+	})
+
+	It("cancels a running batch job — parent cancellation propagates to child workflows", func() {
+		// Submit with enough items/batches that the child workflows are still
+		// running when we cancel the parent.
+		resp := apiPost("/jobs", jobPayload{
+			TenantID:         "acme",
+			ItemCount:        60,
+			UseBatchWorkflow: true,
+			BatchCount:       3,
+		})
+		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+		jobID, _ := decodeBody(resp)["jobId"].(string)
+
+		cancelResp := apiPost("/jobs/"+jobID+"/cancel", nil)
+		Expect(cancelResp.StatusCode).To(Equal(http.StatusOK))
+
+		// The parent's ParentClosePolicy (REQUEST_CANCEL) asks each running child
+		// workflow to cancel gracefully rather than terminating it — observable
+		// here as the parent job settling into CANCELLED.
+		result := pollJobUntilDone(jobID, 60*time.Second)
+		Expect(result["status"]).To(Equal("CANCELLED"))
 	})
 })

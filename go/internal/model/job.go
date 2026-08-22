@@ -13,11 +13,11 @@ const (
 type JobStatus string
 
 const (
-	JobStatusPending    JobStatus = "PENDING"
-	JobStatusRunning    JobStatus = "RUNNING"
-	JobStatusCompleted  JobStatus = "COMPLETED"
-	JobStatusFailed     JobStatus = "FAILED"
-	JobStatusCancelled  JobStatus = "CANCELLED"
+	JobStatusPending   JobStatus = "PENDING"
+	JobStatusRunning   JobStatus = "RUNNING"
+	JobStatusCompleted JobStatus = "COMPLETED"
+	JobStatusFailed    JobStatus = "FAILED"
+	JobStatusCancelled JobStatus = "CANCELLED"
 )
 
 // Job is the core domain entity.
@@ -52,6 +52,18 @@ type JobRequest struct {
 	// attempts 1–2, then succeeds on attempt 3. Only applies when UseParallelWorkflow is true.
 	// Accepted values: "PART_A" | "PART_B" | "BOTH" | "" (no failure).
 	SimulateDependencyFailure string `json:"simulateDependencyFailure,omitempty"`
+	// UseBatchWorkflow routes the job to BatchProcessingWorkflow, which splits the fetched
+	// items into BatchCount batches and processes each one in its own ProcessBatchWorkflow
+	// child workflow execution, run concurrently, before aggregating and storing.
+	UseBatchWorkflow bool `json:"useBatchWorkflow,omitempty"`
+	// BatchCount controls how many ProcessBatchWorkflow child workflows are started. Only
+	// applies when UseBatchWorkflow is true. Non-positive values fall back to a default of 3;
+	// values greater than ItemCount are capped to ItemCount so no batch is empty.
+	BatchCount int `json:"batchCount,omitempty"`
+	// SimulateChildFailure injects a retryable failure into ProcessBatchActivity on attempts
+	// 1–2, then succeeds on attempt 3. Only applies when UseBatchWorkflow is true.
+	// Accepted values: "FIRST" (only batch 0 fails) | "ALL" (every batch fails) | "" (no failure).
+	SimulateChildFailure string `json:"simulateChildFailure,omitempty"`
 }
 
 // JobResult is the workflow output.

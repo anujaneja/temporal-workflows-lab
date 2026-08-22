@@ -67,11 +67,14 @@ func (h *Handler) SubmitJob(c *gin.Context) {
 			return fmt.Errorf("create job record: %w", err)
 		}
 
-		// Route to ParallelProcessingWorkflow when the caller requests it; otherwise
-		// use the default sequential DataProcessingWorkflow.
+		// Route to ParallelProcessingWorkflow or BatchProcessingWorkflow when the caller
+		// requests it; otherwise use the default sequential DataProcessingWorkflow.
 		wfFunc := interface{}(workflow.DataProcessingWorkflow)
-		if req.UseParallelWorkflow {
+		switch {
+		case req.UseParallelWorkflow:
 			wfFunc = workflow.ParallelProcessingWorkflow
+		case req.UseBatchWorkflow:
+			wfFunc = workflow.BatchProcessingWorkflow
 		}
 		var err error
 		run, err = h.tc.ExecuteWorkflow(c.Request.Context(), options, wfFunc, req)

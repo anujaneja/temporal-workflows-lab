@@ -79,4 +79,7 @@ type jobPayload struct {
 	SimulateStoreFailure      bool   `json:"simulateStoreFailure,omitempty"`
 	UseParallelWorkflow       bool   `json:"useParallelWorkflow,omitempty"`
 	SimulateDependencyFailure string `json:"simulateDependencyFailure,omitempty"`
+	UseBatchWorkflow          bool   `json:"useBatchWorkflow,omitempty"`
+	BatchCount                int    `json:"batchCount,omitempty"`
+	SimulateChildFailure      string `json:"simulateChildFailure,omitempty"`
 }

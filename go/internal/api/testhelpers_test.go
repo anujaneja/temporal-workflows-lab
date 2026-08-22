@@ -65,6 +65,8 @@ func (f *fakeStore) CreateJob(_ context.Context, rec store.JobRecord) error {
 
 func (f *fakeStore) SaveJobResult(_ context.Context, _ store.JobRecord) error { return f.saveJobErr }
 
+func (f *fakeStore) SaveBatchResult(_ context.Context, _ store.BatchRecord) error { return nil }
+
 func (f *fakeStore) RunInTx(_ context.Context, fn func(store.Store) error) error {
 	if f.txErr != nil {
 		return f.txErr
@@ -82,8 +84,8 @@ type fakeWorkflowRun struct {
 	err   error
 }
 
-func (f *fakeWorkflowRun) GetID() string    { return f.id }
-func (f *fakeWorkflowRun) GetRunID() string { return f.runID }
+func (f *fakeWorkflowRun) GetID() string                              { return f.id }
+func (f *fakeWorkflowRun) GetRunID() string                           { return f.runID }
 func (f *fakeWorkflowRun) Get(_ context.Context, _ interface{}) error { return f.err }
 func (f *fakeWorkflowRun) GetWithOptions(_ context.Context, _ interface{}, _ client.WorkflowRunGetOptions) error {
 	return f.err
@@ -143,4 +145,3 @@ func buildDescribeResponse(wfID, runID string, status enumspb.WorkflowExecutionS
 		},
 	}
 }
-

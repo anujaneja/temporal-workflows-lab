@@ -11,6 +11,9 @@ import (
 type fakeStore struct {
 	saveJobErr error
 	savedRec   *store.JobRecord
+
+	saveBatchErr  error
+	savedBatchRec *store.BatchRecord
 }
 
 func (f *fakeStore) CreateJob(_ context.Context, rec store.JobRecord) error {
@@ -20,6 +23,11 @@ func (f *fakeStore) CreateJob(_ context.Context, rec store.JobRecord) error {
 func (f *fakeStore) SaveJobResult(_ context.Context, rec store.JobRecord) error {
 	f.savedRec = &rec
 	return f.saveJobErr
+}
+
+func (f *fakeStore) SaveBatchResult(_ context.Context, rec store.BatchRecord) error {
+	f.savedBatchRec = &rec
+	return f.saveBatchErr
 }
 
 func (f *fakeStore) RunInTx(_ context.Context, fn func(store.Store) error) error {

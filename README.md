@@ -40,6 +40,7 @@ A Go + Temporal learning lab demonstrating durable workflow orchestration with a
 - **pgx / pgxpool** — uses `github.com/jackc/pgx/v5/pgxpool` for native PostgreSQL support, richer error types, and first-class connection pooling.
 - **Connection pool** — `MaxConns` (default 10) prevents overloading PostgreSQL. Override with `DB_MAX_CONNS`.
 - **Flyway migrations** — schema changes live in `db/migrations/` and are applied automatically before the API or worker start.
+- **Child workflows for batching** — `BatchProcessingWorkflow` splits work across `ProcessBatchWorkflow` child workflow executions run concurrently, each with its own retryable activities and `ParentClosePolicy: REQUEST_CANCEL` so parent cancellation propagates gracefully to every running child.
 
 ---
 
@@ -170,6 +171,14 @@ curl -s -X POST http://localhost:8081/jobs \
   }' | jq
 ```
 
+**Routing to a different workflow** (all default to the sequential `DataProcessingWorkflow`):
+
+| Field | Type | Effect |
+|-------|------|--------|
+| `useParallelWorkflow` | bool | Routes to `ParallelProcessingWorkflow` (splits items into two halves, processes them concurrently, then aggregates). |
+| `useBatchWorkflow` | bool | Routes to `BatchProcessingWorkflow` (splits items into `batchCount` batches, each processed by its own `ProcessBatchWorkflow` **child workflow**, run concurrently, then aggregated). |
+| `batchCount` | int | Number of child workflows `BatchProcessingWorkflow` fans out to. Only applies with `useBatchWorkflow`. Defaults to 3; capped at `itemCount` so no batch is empty. |
+
 Expected response (202):
 
 ```json
@@ -291,9 +300,9 @@ cd go && go test -race ./internal/...
 
 | Package | Specs | What is covered |
 |---------|-------|----------------|
-| `internal/activity` | 31 | ValidateJobActivity, FetchItemsActivity, ProcessItems/PartA/PartB, StoreResultsActivity, AggregateResultsActivity — all success + failure paths |
-| `internal/workflow` | 11 | DataProcessingWorkflow (4 scenarios), ParallelProcessingWorkflow (6 scenarios) with mocked activities |
-| `internal/api` | 11 | SubmitJob, GetJob, CancelJob — valid, invalid, and error cases |
+| `internal/activity` | 39 | ValidateJobActivity, FetchItemsActivity, ProcessItems/PartA/PartB, StoreResultsActivity, AggregateResultsActivity, ProcessBatchActivity, StoreBatchActivity — all success + failure paths |
+| `internal/workflow` | 19 | DataProcessingWorkflow (4 scenarios), ParallelProcessingWorkflow (6 scenarios), ProcessBatchWorkflow (3 scenarios), BatchProcessingWorkflow (5 scenarios, including parent cancellation) with mocked activities |
+| `internal/api` | 14 | SubmitJob, GetJob, CancelJob — valid, invalid, and error cases |
 | `internal/store` | 6 | DBConfig defaults and field values |
 
 ### API integration tests (full stack, containers required)
@@ -332,9 +341,10 @@ cd go && go test ./tests/integration/... -tags integration -v -count=1 -timeout 
 | `POST /jobs` — immediate response | 3 | 202 shape, explicit jobId, 400 on malformed JSON |
 | `POST /jobs` — sequential workflow | 2 | Polls to `COMPLETED`, verifies `itemsProcessed`; fairness fields |
 | `POST /jobs` — parallel workflow | 1 | `useParallelWorkflow: true` reaches `COMPLETED` |
-| `POST /jobs` — failure simulation | 2 | `simulateFailure` and `simulateStoreFailure` both retry and complete |
+| `POST /jobs` — batch workflow | 1 | `useBatchWorkflow: true` fans out to child workflows and reaches `COMPLETED` |
+| `POST /jobs` — failure simulation | 3 | `simulateFailure`, `simulateStoreFailure`, and `simulateChildFailure` all retry and complete |
 | `GET /jobs/:id` | 3 | 404 unknown ID, `RUNNING` immediately after submit, full result on `COMPLETED` |
-| `POST /jobs/:id/cancel` | 2 | Running job cancelled and confirmed by polling; 500 on non-existent job |
+| `POST /jobs/:id/cancel` | 3 | Running job cancelled and confirmed by polling; batch job's children cancelled via `ParentClosePolicy`; 500 on non-existent job |
 
 ### Run everything
 
@@ -388,7 +398,37 @@ curl -s -X POST http://localhost:8081/jobs \
   }' | jq
 ```
 
+### Simulate a failing child batch (`simulateChildFailure`)
+
+Only applies when `useBatchWorkflow` is `true`. `ProcessBatchActivity` fails on attempts 1–2 for the targeted batch(es), then succeeds on attempt 3 — observable as independent per-child retries in the Temporal UI.
+
+```bash
+curl -s -X POST http://localhost:8081/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenantId":             "acme",
+    "itemCount":            9,
+    "useBatchWorkflow":     true,
+    "batchCount":           3,
+    "simulateChildFailure": "FIRST"
+  }' | jq
+```
+
+**Values:** `FIRST` (only batch 0 fails) | `ALL` (every batch fails) | omit for no failure.
+
 Watch the retries progress in real time at [http://localhost:8080](http://localhost:8080).
+
+### Cancelling a batch job (parent → child cancellation)
+
+Cancelling a job started with `useBatchWorkflow: true` cancels `BatchProcessingWorkflow`, which starts each `ProcessBatchWorkflow` child with `ParentClosePolicy: REQUEST_CANCEL`. Every still-running child receives a cancellation request instead of being abruptly terminated — visible in the Temporal UI as `WorkflowExecutionCancelRequested` events on each child execution.
+
+```bash
+JOB=$(curl -s -X POST http://localhost:8081/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"tenantId":"acme","itemCount":60,"useBatchWorkflow":true,"batchCount":3}')
+JOB_ID=$(echo $JOB | jq -r .jobId)
+curl -s -X POST http://localhost:8081/jobs/$JOB_ID/cancel | jq
+```
 
 ---
 
@@ -399,7 +439,8 @@ temporal-workflows-lab/
 ├── Makefile                             # test-unit / test-api / test-all targets
 ├── db/
 │   └── migrations/
-│       └── V1__create_jobs_table.sql   # Flyway-managed schema
+│       ├── V1__create_jobs_table.sql        # Flyway-managed schema
+│       └── V2__create_job_batches_table.sql # Per-batch results for BatchProcessingWorkflow
 ├── docs/
 │   └── temporal-spec.md                # Phase-by-phase design spec
 ├── go/
@@ -409,8 +450,10 @@ temporal-workflows-lab/
 │   ├── internal/
 │   │   ├── activity/                   # Temporal activity implementations
 │   │   │   ├── activities.go           # Activities struct (holds dependencies)
+│   │   │   ├── aggregate.go            # AggregateResultsActivity
+│   │   │   ├── batch.go                # ProcessBatchActivity, StoreBatchActivity
 │   │   │   ├── fetch.go                # FetchItemsActivity
-│   │   │   ├── processing.go           # ProcessItemsActivity
+│   │   │   ├── processing.go           # ProcessItemsActivity, ProcessPartA/BActivity
 │   │   │   ├── storage.go              # StoreResultsActivity
 │   │   │   └── validate.go             # ValidateJobActivity
 │   │   ├── api/
@@ -419,11 +462,14 @@ temporal-workflows-lab/
 │   │   │   └── job.go                  # Domain types (JobRequest, JobResult, Priority …)
 │   │   ├── store/
 │   │   │   ├── postgres.go             # pgxpool implementation + DBConfig + RunInTx
-│   │   │   └── store.go                # Store interface
+│   │   │   └── store.go                # Store interface + JobRecord/BatchRecord
 │   │   ├── temporalclient/
 │   │   │   └── dial.go                 # Retry-aware Temporal client dialer
 │   │   └── workflow/
-│   │       └── data_processing.go      # DataProcessingWorkflow definition
+│   │       ├── data_processing.go      # DataProcessingWorkflow (sequential)
+│   │       ├── parallel_processing.go  # ParallelProcessingWorkflow (parallel activities)
+│   │       ├── batch_processing.go     # BatchProcessingWorkflow (parallel child workflows)
+│   │       └── process_batch.go        # ProcessBatchWorkflow (child workflow)
 │   ├── tests/
 │   │   └── integration/                # API integration tests (build tag: integration)
 │   │       ├── suite_test.go           # Container lifecycle (BeforeSuite / AfterSuite)

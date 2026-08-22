@@ -88,6 +88,10 @@ func (s *postgresStore) SaveJobResult(ctx context.Context, rec JobRecord) error 
 	return execSaveJobResult(ctx, s.pool, rec)
 }
 
+func (s *postgresStore) SaveBatchResult(ctx context.Context, rec BatchRecord) error {
+	return execSaveBatchResult(ctx, s.pool, rec)
+}
+
 // RunInTx runs fn inside a single database transaction.
 // If fn returns an error the transaction is rolled back; otherwise it is committed.
 // The Store passed to fn operates on the same open transaction.
@@ -125,6 +129,10 @@ func (t *txStore) CreateJob(ctx context.Context, rec JobRecord) error {
 
 func (t *txStore) SaveJobResult(ctx context.Context, rec JobRecord) error {
 	return execSaveJobResult(ctx, t.tx, rec)
+}
+
+func (t *txStore) SaveBatchResult(ctx context.Context, rec BatchRecord) error {
+	return execSaveBatchResult(ctx, t.tx, rec)
 }
 
 func (t *txStore) RunInTx(ctx context.Context, fn func(tx Store) error) error {
@@ -189,3 +197,29 @@ func execSaveJobResult(ctx context.Context, e dbExecutor, rec JobRecord) error {
 	return nil
 }
 
+// execSaveBatchResult upserts the result of one batch, keyed on (job_id, batch_index).
+func execSaveBatchResult(ctx context.Context, e dbExecutor, rec BatchRecord) error {
+	const q = `
+		INSERT INTO job_batches (
+			job_id, batch_index, status, items_processed, items_failed, error, completed_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (job_id, batch_index) DO UPDATE SET
+			status          = EXCLUDED.status,
+			items_processed = EXCLUDED.items_processed,
+			items_failed    = EXCLUDED.items_failed,
+			error           = EXCLUDED.error,
+			completed_at    = EXCLUDED.completed_at
+	`
+	if _, err := e.Exec(ctx, q,
+		rec.JobID,
+		rec.BatchIndex,
+		string(rec.Status),
+		rec.ItemsProcessed,
+		rec.ItemsFailed,
+		rec.Error,
+		rec.CompletedAt,
+	); err != nil {
+		return fmt.Errorf("SaveBatchResult %s/%d: %w", rec.JobID, rec.BatchIndex, err)
+	}
+	return nil
+}
