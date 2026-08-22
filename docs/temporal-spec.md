@@ -211,6 +211,19 @@ Responsibilities:
 - Store processing results.
 - Simulate persistence failure when required.
 
+### ProcessBatchActivity
+
+Responsibilities:
+
+- Process the items belonging to one batch, on behalf of a `ProcessBatchWorkflow` child workflow.
+- Optionally simulate a failure for a specific batch or for every batch (child-failure experiments).
+
+### StoreBatchActivity
+
+Responsibilities:
+
+- Persist one batch's result into `job_batches`, independently of the final aggregated job result.
+
 ---
 
 # 7. Task Queues
@@ -339,16 +352,22 @@ The application will test:
 
 # 10. Child Workflows
 
-`DataProcessingWorkflow` will eventually create child workflows.
+Implemented as `BatchProcessingWorkflow`, a third top-level workflow alongside `DataProcessingWorkflow` and `ParallelProcessingWorkflow` (routed via `JobRequest.UseBatchWorkflow`).
 
 ```
-DataProcessingWorkflow
+BatchProcessingWorkflow
         │
-        ├── ProcessBatchWorkflow
-        ├── ProcessBatchWorkflow
-        ├── ProcessBatchWorkflow
-        └── ProcessBatchWorkflow
+        ├── ValidateJob
+        ├── FetchItems
+        │
+        ├── ProcessBatchWorkflow (batch 0)   ─┐
+        ├── ProcessBatchWorkflow (batch 1)   ─┼── all children awaited
+        └── ProcessBatchWorkflow (batch N)   ─┘
+        │
+        └── StoreResults (aggregated across all batches)
 ```
+
+The items returned by `FetchItems` are split into `JobRequest.BatchCount` contiguous batches (default 3, capped at item count so no batch is empty). Each batch is processed by its own `ProcessBatchWorkflow` child workflow execution, started before any is awaited, so Temporal runs them concurrently.
 
 Each child workflow processes one batch.
 
@@ -359,14 +378,14 @@ ProcessBatchWorkflow
         └── StoreBatchActivity
 ```
 
-Experiments will include:
+`StoreBatchActivity` upserts a row into `job_batches` (keyed on `job_id, batch_index`), so each child's completion is independently observable in the database as well as in the Temporal UI.
 
-- Multiple child workflows.
-- Parallel child workflows.
-- Child failure.
-- Parent waiting for children.
-- Parent cancellation.
-- Child cancellation behavior.
+Experiments implemented:
+
+- **Multiple / parallel child workflows** — `BatchCount` children are started concurrently (fan-out) and awaited in order (fan-in); the first failing child's error fails the parent.
+- **Child failure** — `JobRequest.SimulateChildFailure` (`"FIRST"` fails only batch 0, `"ALL"` fails every batch) injects a retryable error into `ProcessBatchActivity` on attempts 1–2, succeeding on attempt 3, so per-child retry behavior is observable independently in the Temporal UI.
+- **Parent waiting for children** — the parent blocks on every child future before aggregating and storing the final result.
+- **Parent cancellation / child cancellation behavior** — each child is started with `ChildWorkflowOptions.ParentClosePolicy = PARENT_CLOSE_POLICY_REQUEST_CANCEL` (rather than the SDK default `TERMINATE`), so cancelling the parent (`POST /jobs/{id}/cancel`) asks every still-running child to cancel gracefully instead of being abruptly killed. Observable in the Temporal UI as `WorkflowExecutionCancelRequested` events on each child.
 
 ---
 
@@ -871,10 +890,10 @@ This allows a meaningful comparison between the Go and Java Temporal SDKs.
 ### Phase 5 — Child Workflows
 
 ```
-- [ ] Batch workflow
-- [ ] Parallel child workflows
-- [ ] Child failure
-- [ ] Parent cancellation
+- [x] Batch workflow
+- [x] Parallel child workflows
+- [x] Child failure
+- [x] Parent cancellation
 ```
 
 ### Phase 6 — Scheduling

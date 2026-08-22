@@ -25,6 +25,19 @@ type JobRecord struct {
 	CompletedAt *time.Time
 }
 
+// BatchRecord is the persistence representation of a single batch processed by a
+// ProcessBatchWorkflow child workflow execution, launched from BatchProcessingWorkflow.
+type BatchRecord struct {
+	JobID          string
+	BatchIndex     int
+	Status         model.JobStatus
+	ItemsProcessed int
+	ItemsFailed    int
+	Error          string
+	// CompletedAt is nil until the batch finishes.
+	CompletedAt *time.Time
+}
+
 // Store abstracts persistence for job lifecycle tracking.
 // Implementations can be swapped out or replaced with test doubles.
 type Store interface {
@@ -34,6 +47,10 @@ type Store interface {
 	// SaveJobResult upserts the final result of a completed or failed job.
 	// Called by StoreResultsActivity when the workflow finishes.
 	SaveJobResult(ctx context.Context, rec JobRecord) error
+
+	// SaveBatchResult upserts the result of one batch, keyed on (JobID, BatchIndex).
+	// Called by StoreBatchActivity when a ProcessBatchWorkflow child execution finishes.
+	SaveBatchResult(ctx context.Context, rec BatchRecord) error
 
 	// RunInTx executes fn inside a single database transaction.
 	// If fn returns an error the transaction is rolled back; otherwise it is committed.
